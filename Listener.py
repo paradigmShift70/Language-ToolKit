@@ -99,7 +99,9 @@ class Listener( object ):
          print( 'Please close the log before exiting.' )
          return
    
+      print( '- Virtual Machine reinitialized.' )
       self._interp.reboot( )
+      print( '- Runtime environment reinitialized.' )
       self._history = [ ]
       
       for libFileName in self._interp.runtimeLibraries():
@@ -384,8 +386,11 @@ class Listener( object ):
                self.doCommand( inputExprStr[:-1] )
             else:
                try:
+                  start = time.process_time()
                   resultStr = self._interp.eval( inputExprStr )
+                  cost  = time.process_time() - start
                   self.writeLn( '\n==> ' + resultStr )
+                  print( '-------------  Total execution time:  {:15.5f} sec'.format(cost) )
 
                except Scanner.ParseError as ex:
                   self._exceptInfo = sys.exc_info( )

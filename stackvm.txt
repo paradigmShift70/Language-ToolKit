@@ -1,0 +1,777 @@
+         value = self.changes[key]
+         partial(value[0].encode('ascii'))
+         sumpartial(value[1].encode('ascii'))
+
+      return partial
+
+      
+
+
+
+
+
+PUSH <value>
+SS:  [ ... ]
+[ ..., <value> ]
+FLG: 0
+0   
+
+
+
+   
+POP                SS:  [ ..., <top> ]       [ ... ]
+                   FLG: 0                    0   
+   
+POP <count>        SS:  [ ... ]              [ ... ]
+                   FLG: 0                    0   
+
+   Descr:  Remove <count> items from the top of the stack
+
+TOPSET <value>     SS:   [ ..., <oldTop> ]    [ ..., <value>/<oldTop> ]
+
+   def op_TOPSET( self ):                   # TOPSET <val>
+      operand = self.CS[ self.CP + 1 ]    # get operand
+      self.SS[ -1 ] = val      
+      self.CP += 2
+   
+   def op_PUSHnth( self ):                  # PUSHNTH <offset>
+      operand = self.CS[ self.CP + 1 ]    # get operand
+      self.SS.append( self.SS[ 0 - operand ] )      
+      self.CP += 2
+
+   def op_SWAPXY( self ):
+      self.SS[ 0 - 2 ], self.SS[ 0 - 1 ] = self.SS[ 0 - 2 : ]
+      self.CP += 1
+
+   # Environment Management
+   def op_DEF( self ):        # [ obj, name ]  =>  [ obj ]
+      name = self.SS.pop( )
+      obj  = self.SS[ -1 ]
+      self.ENV.declLocal( name, obj )
+      self.CP += 1
+   
+   def op_DEFG( self ):       # [ obj, name ]  =>  [ obj ]
+      name = self.SS.pop( )
+      obj  = self.SS[ -1 ]
+      self.ENV.declGlobal( name, obj )
+      self.CP += 1
+   
+   def op_UNDEF( self ):      # [ ..., name ]  =>  [ ... ]
+      name = self.SS.pop( )
+      self.ENV.unDecl( name )
+      sefl.CP += 1
+
+   def op_SET( self ):        # [ obj, name ]  =>  [ obj ]
+      name = self.SS.pop( )
+      obj  = self.SS[ -1 ]
+      self.ENV.rebind( name, obj )
+      self.CP += 1
+   
+   def op_GET( self ):        # [ name ]  =>  [ obj ]
+      name = self.SS[-1]
+      self.SS[-1] = self.ENV.get( name )
+      self.CP += 1
+   
+   def op_ISDEF( self ):      # [ name ]  =>  [ obj ]
+      name = self.SS[-1]
+      self.SS[-1] = self.ENV.isBound( name )
+      self.CP += 1
+
+   def op_BEGIN( self ):       # open a new (nested) scope.
+      self.ENV = Environment( self.ENV )
+      self.CP += 1
+   
+   def op_END( self ):
+      self.ENV = self.ENV.parentEnv( )
+      self.CP += 1
+
+   # Register Controls
+   def op_PUSH_CS( self ):
+      self.SS.append( self.CS )
+      self.CP += 1
+   
+   def op_POP_CS( self ):
+      self.CS = self.SS.pop( )
+      self.CP += 1
+
+   def op_PUSHFLG( self ):
+      self.SS.append( self.FLG )
+      self.CP += 1
+
+   def op_POPFLG( self ):
+      self.FLG = self.SS.pop( )
+      self.CP += 1
+
+   def op_PUSH_BPOFF( self ):
+      '''PUSH_BPOFF
+      Push an element at the indicated offset from the Base Pointer.
+      '''
+      offset = self.CS[ self.CP + 1 ]
+      self.SS.append( self.SS[self.BP + offset] )
+      self.CP += 2
+
+   def op_CALL( self ):           # [ ..., arg2, arg1, NewCodeSeg ]
+      # Prepare new Stack Frame & Return Info
+      newCodeSeg = self.SS.pop( )
+      numArgs    = self.CS[self.CP+1]
+      
+      # Save current stack frame
+      self.SP    = len(self.SS)     # SP set to stack top
+      
+      ret_SP = self.SP - numArgs
+      ret_BP = self.BP
+      ret_CS = self.CS
+      ret_CP = self.CP + 2
+      
+      self.BINF  = [ret_CS, ret_CP, ret_SP, ret_BP, self.BINF]
+      
+      # Construct new stack frame
+      self.BP    = self.SP             # BP points to argument 0
+      self.CS    = newCodeSeg
+      self.CP    = 0
+   
+   def op_RET( self ):
+      returnValue = self.SS.pop( )     # Save a copy of the return value
+      self.CS, self.CP, self.SP, self.BP, self.BINF = self.BINF # Restore the caller's stack frame
+      del self.SS[ self.SP : ]         # Pop all of the caller's arguments
+      self.SS.append( returnValue )    # Restore the return value to the top of the stack
+   
+   def op_CALLp( self ):
+      pyFn       = self.SS.pop()
+      numArgs    = self.CS[self.CP+1]
+      
+      oldCP      = self.CP
+      try:
+         pyFn( self, numArgs )
+      except:
+         self.FLG = self.UNKNOWN_UNRECOVERABLE
+      if self.CP == oldCP:
+         self.CP += 2
+
+   # Basic Branching
+   def op_HALT( self ):
+      self.FLG = self.HALT
+      self.CP += 1
+
+   def op_JMP( self ):
+      self.JUMP_OP( )
+
+   def op_JMP_T( self ):
+      self.CJUMP_OP( lambda x: x == True )
+
+   def op_JMP_F( self ):
+      self.CJUMP_OP( lambda x: x == False )
+
+   def op_JMP_EQ( self ):
+      self.CJUMP_OP( lambda x: x == 0 )
+
+   def op_JMP_NE( self ):
+      self.CJUMP_OP( lambda x: x != 0 )
+
+   def op_JMP_LT( self ):
+      self.CJUMP_OP( lambda x: x < 0 )
+
+   def op_JMP_LE( self ):
+      self.CJUMP_OP( lambda x: x <= 0 )
+
+   def op_JMP_GT( self ):
+      self.CJUMP_OP( lambda x: x > 0 )
+
+   def op_JMP_GE( self ):
+      self.CJUMP_OP( lambda x: x >= 0 )
+
+   # Boolean Operations
+   def op_bNEG( self ):
+      self.BINARY_OP( op.not_, bool )
+
+   def op_bAND( self ):
+      self.BINARY_OP( lambda x,y: x and y, bool, bool )
+
+   def op_bOR( self ):
+      self.BINARY_OP( lambda x,y: x or y, bool, bool )
+
+   # Bitwise Operations
+   def op_iNOT( self ):
+      self.BINARY_OP( op.invert, int )
+
+   def op_iAND( self ):
+      self.BINARY_OP( op.and_, int, int )
+   
+   def op_iOR( self ):
+      self.BINARY_OP( op.or_, int, int )
+
+   def op_iXOR( self ):
+      self.BINARY_OP( op.xor, int, int )
+
+   def op_iSHL( self ):
+      self.BINARY_OP( op.lshift, int, int )
+
+   def op_iSHR( self ):
+      self.BINARY_OP( op.rshift, int, int )
+
+   def op_iROR( self, n ):
+      pass
+
+   def op_iROL( self, n ):
+      pass
+
+   # Integer Oprations
+   def op_iABS( self ):
+      self.UNARY_OP( abs, int )
+
+   def op_iCHSIGN( self ):
+      self.UNARY_OP( op.neg, int )
+
+   def op_iPROMOTE( self ): # int -> float
+      self.UNARY_OP( float, int )
+
+   def op_iEQ( self ):
+      self.BINARY_OP( op.__eq__, int, int )
+   
+   def op_iNE( self ):
+      self.BINARY_OP( op.__ne__, int, int )
+   
+   def op_iGT( self ):
+      self.BINARY_OP( op.__gt__, int, int )
+   
+   def op_iGE( self ):
+      self.BINARY_OP( op.__ge__, int, int )
+   
+   def op_iLT( self ):
+      self.BINARY_OP( op.__lt__, int, int )
+   
+   def op_iLE( self ):
+      self.BINARY_OP( op.__le__, int, int )
+   
+   def op_iCMP( self ):
+      self.BINARY_OP( op.sub, int, int )
+
+   def op_iINC( self ):
+      self.UNARY_OP( lambda x: x + 1, int )
+   
+   def op_iDEC( self ):
+      self.UNARY_OP( lambda x: x - 1, int )
+
+   def op_iADD( self ):
+      self.BINARY_OP( op.add, int, int )
+
+   def op_iSUB( self ):
+      SS = self.SS
+      SS[-1] = (lambda x: int(SS[-1]) - int(x))(SS.pop())
+      self.CP += 1
+      #self.BINARY_OP( op.sub, int, int )
+
+   def op_iMUL( self ):   
+      self.BINARY_OP( op.mul, int, int )
+
+   def op_iDIV( self ):
+      self.BINARY_OP( op.floordiv, int, int )
+   
+   def op_iMOD( self ):
+      self.BINARY_OP( op.mod, int, int )
+   
+   # IEEE Float Operations
+   def op_fABS( self ):
+      self.UNARY_OP( abs, float )
+
+   def op_fCHSIGN( self ):
+      self.UNARY_OP( op.neg, float )
+
+   def op_fTRUNC( self ):
+      self.UNARY_OP( int, float )
+
+   def op_fFRAC( self ):
+      self.UNARY_OP( lambda x:x - int(x), float )
+
+   def op_fEQ( self ):
+      self.BINARY_OP( op.__eq__, float, float )
+   
+   def op_fNE( self ):
+      self.BINARY_OP( op.__ne__, float, float )
+   
+   def op_fGT( self ):
+      self.BINARY_OP( op.__gt__, float, float )
+   
+   def op_fGE( self ):
+      self.BINARY_OP( op.__ge__, float, float )
+   
+   def op_fLT( self ):
+      self.BINARY_OP( op.__lt__, float, float )
+   
+   def op_fLE( self ):
+      self.BINARY_OP( op.__le__, float, float )
+   
+   def op_fCMP( self ):
+      op2 = self.SS.pop()
+      op1 = self.SS[-1]
+      if op1 < op2:
+         self.SS[-1] = 1
+      elif op2 < op1:
+         self.SS[-1] = -1
+      else:
+         self.SS[-1] = 0
+      self.CP += 1
+
+   def op_fADD( self ):
+      self.BINARY_OP( op.__add__, float, float )
+
+   def op_fSUB( self ):
+      self.BINARY_OP( op.__sub__, float, float )
+   
+   def op_fMUL( self ):   
+      self.BINARY_OP( op.__mul__, float, float )
+
+   def op_fDIV( self ):
+      self.BINARY_OP( op.__div__, float, float )
+   
+   def op_fPOW( self ):
+      self.BINARY_OP( op.pow, float, float )
+
+   def op_fLOG( self ):
+      self.BINARY_OP2( op.log, float, float )
+   
+   def op_fSIN( self ):
+      self.UNARY_OP( math.sin, float )
+
+   def op_fASIN( self ):
+      self.UNARY_OP( math.asin, float )
+
+   def op_fCOS( self ):
+      self.UNARY_OP( math.cos, float )
+
+   def op_fACOS( self ):
+      self.UNARY_OP( math.acos, float )
+
+   def op_fTAN( self ):
+      self.UNARY_OP( math.tan, float )
+
+   def op_fTAN2( self ):
+      self.BINARY_OP( math.atan2, float, float )
+
+   def op_fATAN( self ):
+      self.UNARY_OP( math.atan, float )
+
+   # String Manipulation
+   def op_sLEN( self ):    # [ ..., string ]  =>  [ ..., len(string) ]
+      theString = self.SS[-1]
+      self.SS[-1] = len(theString)
+      self.CP += 1
+   
+   def op_sAT( self ):     # [ ..., string, index ]  =>  [ ..., character ]
+      index = self.SS.pop()
+      theString = self.SS[ -1 ]
+      self.SS[ -1 ] = theString[index]
+      self.CP += 1
+
+   def op_sCAT( self ):
+      '''CAT
+      [ ..., string1, string2 ]  =>  [ ..., string1 + string2 ]
+      '''
+      string2 = self.SS.pop()
+      string1 = self.SS[-1]
+      self.SS[-1] = string1 + string2
+      self.CP += 1
+   
+   def op_sJOIN( self ):
+      '''JOIN
+      [ ..., [ string1, string2, ...], joinStr ]  =>  [ ..., string1 + joinStr + string2 + joinStr + ... ]
+      '''
+      joinStr = self.SS.pop()
+      strList = self.SS[-1]
+      self.SS[-1] = joinStr.join( *strList )
+      self.CP += 1
+
+   def op_sSPLIT( self ):
+      '''SPLIT
+      [ ..., string, index ]  =>  [ ..., string[ : index ], string[ index : ] ]
+      '''
+      index = self.SS.pop()
+      theString = self.SS[-1]
+      start = theString[ : index ]
+      end   = theString[ index : ]
+      self.SS[-1] = start
+      self.SS.push(end)
+      self.CP += 1
+   
+   def op_sTOINT( self ):  # [ ..., string ]  =>  [ ..., int(string) ]
+      theString = self.SS[-1]
+      self.SS[-1] = int(theString)
+      self.CP += 1
+   
+   def op_sTOFLOAT( self ): # [ ..., string ]  =>  [ ..., float(string) ]
+      theString = self.SS[-1]
+      self.SS[-1] = float(theString)
+      self.CP += 1
+   
+   def op_sCMP( self ):    # [ ..., string1, string2 ]  =>  [ ..., int ]
+      str2 = self.SS.pop().casefold()
+      str1 = self.SS[-1].casefold()
+      result = 0
+      for c1,c2 in zip(str1,str2):
+         if c1 < c2:
+            result = 1
+            break
+         elif c1 > c2:
+            result = -1
+            break
+      self.SS[-1] = result
+      self.CP += 1
+
+   # List Operations
+   def op_lPACK( self ):       # [ obj1, obj2, ... objCount ]  =>  [ ..., [obj1, obj2, ...] ]
+      count  = self.SS.pop( )
+      values = self.SS[ 0 - count : ]
+      del self.SS[ 0 - count - 1 : ]
+      self.SS.append( values )
+      self.CP += 1
+   
+   def op_lUNPACK( self ):     # [ list ] <- SP   =>   [ list-contents ] <- SP
+      values = self.SS.pop( )
+      count  = len(values)
+      values.append( count )
+      self.SS.extend( values )
+      self.CP += 1
+   
+   def op_lREVERSE( self ):    # [ ..., list ]  =>  [ ..., reversed(list) ]
+      theList = self.SS[-1].reverse()
+      self.CP += 1
+
+   def op_lLEN( self ):        # [ ..., list ]  =>  [ ..., len(list) ]
+      theList = self.SS[ -1 ]
+      self.SS[-1] = len(theList)
+      self.CP += 1
+
+   def op_lAT( self ):         # [ list, list-index ] <- SP  =>  [ list, list-item ]
+      index = self.SS[ -1 ]
+      aList = self.SS[ -2 ]
+      self.SS[ -1 ] = aList[ index ]
+      self.CP += 1
+   
+   def op_lATSET( self ):      # [ list, list-index, newValue ]  ;; modify list at list-index with newValue
+      newValue = self.SS.pop( )
+      index    = self.SS.pop( )
+      theList  = self.SS[ -1 ]
+      theList[ index ] = newValue
+      self.CP += 1
+   
+   def op_lPUSH( self ):       # [ list, newItem ]
+      newItem  = self.SS.pop( )
+      theList  = self.SS[ -1 ]
+      theList.push( newItem )
+      self.CP += 1
+   
+   def op_lPOP( self ):        # [ list ]  =>  [ oldListTop ]
+      theList  = self.SS[ -1 ]
+      value    = theList.pop( )
+      self.SS.append( value )
+      self.CP += 1
+   
+   def op_lCAT( self ):        # [ list1, list2 ]  => [ <list-1-contents> <list-2-contents> ]
+      list2 = self.SS.pop()
+      list1 = self.SS[ -1 ]
+      self.SS[ -1 ] = list1 + list2
+      self.CP += 1
+   
+   def op_lSPLIT( self ):      # [ ..., aList, size ]  =>  [ ..., aList[ : size ], aList[ size : ] ]
+      count = self.SS.pop( )
+      theList = self.SS[ -1 ]
+      self.SS[ -1 ] = theList[ : count ]
+      self.SS.append( theList[ count : ] )
+      self.CP += 1
+
+   def op_lCOPY( self ):
+      top = self.SS[ -1 ]
+      top = copy.copy( top )
+      self.SS.push( top )
+      self.CP += 1
+   
+   def op_lSWAPSTACK( self ):  # [ ..., stack-A ] => [ ..., oldStack ]
+      '''SWAPSTACK
+      SS = currentStack           SS = alternateStack
+      [..., alternateStack ]  =>  [ ..., currentStack ]
+      '''
+      newStack = self.SS.pop( )
+      oldStack = self.SS
+      self.SS = newStack
+      newStack.push( oldStack )
+      self.CP += 1
+   
+   def op_lPUSHNEWLIST( self ):      # push a new empty list onto the stack.
+      self.SS.push( list() )
+      self.CP += 1
+
+
+import threading
+import time
+from queue import PriorityQueue
+
+class Agent( threading.Thread ):
+   requestID = 0
+   
+   def __init__( self, requestsQueue, resultsQueue, **kwds ):
+      super().__init__( **kwds )
+      self.setDaemon( 1 )
+      self.workRequestQueue = PriorityQueue
+      self.resultQueue      = PriorityQueue
+      self.start( )
+   
+   def performWork( self, priority, callable, *args, **kwds ):
+      Agent.requestID += 1
+      self.workRequestQueue.put( (priority, (Agent.requestID, callable, args, kwds)) )
+      return Agent.requestID
+
+   def run( self ):
+      while True:
+         priority, request = self.workRequestQueue.get( )
+         requestID, callable, args, kwds = request
+         self.resultQueue.put( (requestID, callable(*args,**kwds)) )
+
+def systemClockAgent( seconds=0.10 ):
+   time.sleep( seconds )
+   return 'clock-tick'
+   
+
+class InterruptableStackVM( StackVM ):
+   def __init__( self ):
+      super().__init__( )
+ 
+   def run( self, CS ):
+      self.reboot( CS )
+      while True:
+         self.handleIRQ( )
+         self.IR = self.CS[ self.CP ]
+         func = getattr( self, 'op_' + self.IR )
+         func( )
+         
+         if self.FLG != 0:
+            if self.FLG == self.HALT:
+               break
+   
+   def handleIRQ( self ):
+      irq,payload = self.IRQ.get( )
+      
+      func = getattr( self, 'irq_' + self.irq )
+      func(payload)
+  
+   def reboot( self, CS, SS=None, ENV=None ):
+      super().reboot( CS, SS, ENV )
+      
+      self.IRQ     = [ ]                       # Interrupts
+      self.IV      = [ ]                       # Interrupt Handler Vector
+
+   def op_IRQ_SEND( self ):
+      '''Generate an interrupt request.'''
+      pass
+   
+   def op_IRQ_SUSPEND( self ):
+      '''Suspend interrupt handling.'''
+      pass
+   
+   def op_IRQ_RESUME( self ):
+      '''Resume interrupt handling.'''
+      pass
+   
+   def irq_1( self, payload ):
+      pass
+   
+   def irq_2( self, payload ):
+      pass
+   
+
+
+def assemble( aProg ):
+   # Two-Pass Assembler
+   codeSeg     = [ ]
+   localLables = { }
+   
+   # Pass 1 - Catalog Labels
+   address = 0
+   for line in aProg:
+      opcode   = line[0]
+      operands = line[1:]
+      if isinstance( opcode, str ) and (opcode[-1] == ':'):
+         localLables[opcode] = address
+         
+         opcode   = line[1]
+         operands = line[2:]
+      
+      address += 1 + len(operands)
+
+   # Pass 2 - Replace Jump Labels
+   for address,line in enumerate(aProg):
+      opcode   = line[0]
+      operands = line[1:]
+      if isinstance( opcode, str ) and (opcode[-1] == ':'):
+         opcode   = line[1]
+         operands = line[2:]
+      
+      codeSeg.append( opcode )
+      
+      for operand in operands:
+         if isinstance( operand, str ) and (operand[-1] == ':'):
+            operand = localLables[operand]
+         
+         codeSeg.append( operand )
+
+   return codeSeg
+
+def static_link( codeSeg, symbolTable ):
+   linkedProgram = [ ]
+   for instruction in codeSeg:
+      opCode, *operands = instruction
+      
+      linkedOperands = [ ]
+      for operand in operands:
+         if isinstance( operand, str ):
+            operand = symbolTable[ operand ]
+         
+         linkedOperands.append( operand )
+   
+      linkedProgram.append( opCode, *linkedOperands )
+   
+   return linkedProgram
+
+
+
+
+
+
+
+2001: A Space Odyssey
+Sunshine
+Bladerunner
+Lord of the Rings
+
+
+
+Agent experiences/travels some sort of actual & mental odyssey
+Some sort of physical odyssey/virtual journey parallels some sort of psychological odyssey which
+   forever transforms the agent.  The agent experiences a sort of maturation, development or
+   mental triumph that makes the agent somehow forever changed.
+
+
+
+News
+
+- Events which have consequences on peoples lives.
+
+- Events which have personal consequences.
+
+
+
+
+
+
+DataSeg( {
+
+   'data': [ 1, 2, 3, 4 ]
+
+   } )
+
+DataSeg(
+   data=[ 1, 2, 3, 4 ]
+   )
+
+
+CodeSeg( [
+   ('PUSH', 3),
+   ('$else$1'
+   (...),
+   ] )
+
+CodeSeg(
+   '''PUSH 3;
+''' )
+
+
+
+
+Victim:  Abused Very Young Child (Physical Abuse, Attachment)
+   Characterized By:
+   - Crying, Frightened
+
+
+Tormentor:  "Authority"  (Family court, government, school system, teachers, religion, etc...)
+   - Oppressing heavy massive overbearing deciding authroity
+   - Huge heavy/strong institutional buildings
+   - Some one/thing possessing a fiat agency over myself 
+   - Terror that one misstep and "they" might decide to separate me from my mother.
+
+   The feeling that everything and everyone has this control over me from
+   external to internal, that I'm a helpless thing that is just a thing to be
+   used, controlled, discarded, perhaps traded all without any regard to my
+   personal preference, because my preference doesn't matter.  That is the
+   oppression of the "Authority".
+
+   My deep distrust of Social Hierarchies.
+
+   Triggered by large cinder-block institutional buildings.
+
+   Triggered by anything resembling suggestion that I submit to an authority.
+
+   Tormented by fantasies of agnecies acting over my person with by fiat authority.
+      This terror of being
+         - primed    [ turned into a needed function or processing unit (educated,trained,molded) ].
+         - applied   [ inserted into an assembly line of functions (cogs/drone) ].
+         - traded    [ marketed, exchanged like an commodity) ].
+         - discarded [ at end of life ].
+
+
+Tormentor:  My Mother
+   Young childhood - possible physical abuse
+                     possible psychological abuse
+                     possible abuse with rectal thermometer
+
+   My early Teen Years (She was a fierce person, now angry now pouncing like an angry cat)
+
+   She could be raging angry
+
+   She could be fun
+
+
+My Father
+
+
+Paternal Grandmother
+
+
+Bullies (Highschool)
+   - "dumb", "fag", "queer" (classmates, teachers, other adults peer)
+
+
+My friends were mostly the old ladies in the neighborhood.
+
+
+
+
+
+
+
+
+      tf+-
+
+
+f   00
+t   11
+
++   10
+-   01
+
+
+
+
+
+
+fft
+
+00 00 11
+
+11 11 00
+
+
+2^6
+64
+
+
+
+
